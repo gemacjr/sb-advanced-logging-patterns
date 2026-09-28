@@ -1,0 +1,14 @@
+filebeat.inputs:
+  - type: filestream
+    id: order-service-json
+    paths:
+      - /logs/*.json
+    parsers:
+      # Each line is already a JSON event from LogstashEncoder; lift its fields to the top level
+      - ndjson:
+          target: ""
+          add_error_key: true
+          overwrite_keys: true
+
+output.logstash:
+  hosts: ["logstash:5044"]

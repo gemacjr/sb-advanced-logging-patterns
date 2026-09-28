@@ -1,0 +1,88 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<configuration>
+    <include resource="org/springframework/boot/logging/logback/defaults.xml"/>
+
+    <springProperty name="SERVICE" source="spring.application.name" defaultValue="app"/>
+    <springProperty name="ENV" source="app.environment" defaultValue="local"/>
+    <springProperty name="JSON_FILE" source="app.logging.json-file" defaultValue="logs/app.json"/>
+
+    <!--
+      Enterprise pattern from the article:
+      Timestamp | Service | Environment | RequestId | UserId | TraceId | Thread | Class | Message
+    -->
+    <property name="HUMAN_PATTERN"
+              value="%d{yyyy-MM-dd HH:mm:ss.SSS} ${SERVICE} ${ENV} [%X{requestId:-}] [%X{userId:-}] [%X{traceId:-}] [%thread] %highlight(%-5level) %cyan(%logger{30}) %X{orderId:-} %X{paymentId:-} - %msg%n"/>
+
+    <!-- The file Filebeat ships to Logstash -> Elasticsearch -> Kibana (always JSON, one event per line) -->
+    <appender name="JSON_FILE_APPENDER" class="ch.qos.logback.core.rolling.RollingFileAppender">
+        <file>${JSON_FILE}</file>
+        <rollingPolicy class="ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy">
+            <fileNamePattern>${JSON_FILE}.%d{yyyy-MM-dd}.%i.gz</fileNamePattern>
+            <maxFileSize>50MB</maxFileSize>
+            <maxHistory>7</maxHistory>
+            <totalSizeCap>1GB</totalSizeCap>
+        </rollingPolicy>
+        <encoder class="net.logstash.logback.encoder.LogstashEncoder">
+            <customFields>{"service":"${SERVICE}","environment":"${ENV}"}</customFields>
+            <!-- Monotonic per-JVM counter: breaks ties when several events share a timestamp -->
+            <provider class="net.logstash.logback.composite.loggingevent.SequenceJsonProvider"/>
+            <throwableConverter class="net.logstash.logback.stacktrace.ShortenedThrowableConverter">
+                <maxDepthPerThrowable>30</maxDepthPerThrowable>
+                <rootCauseFirst>true</rootCauseFirst>
+            </throwableConverter>
+            <jsonGeneratorDecorator class="net.logstash.logback.mask.MaskingJsonGeneratorDecorator">
+                <defaultMask>****</defaultMask>
+                <paths>password,otp,token,authorization,cardNumber</paths>
+                <value>\b\d{13,19}\b</value>
+                <value>(?i)(password|otp|token)=[^\s,]+</value>
+            </jsonGeneratorDecorator>
+        </encoder>
+    </appender>
+
+    <!-- Never block request threads on disk I/O -->
+    <appender name="ASYNC_JSON_FILE" class="ch.qos.logback.classic.AsyncAppender">
+        <appender-ref ref="JSON_FILE_APPENDER"/>
+        <neverBlock>true</neverBlock>
+        <discardingThreshold>0</discardingThreshold>
+    </appender>
+
+    <springProfile name="local">
+        <appender name="HUMAN_CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
+            <encoder>
+                <pattern>${HUMAN_PATTERN}</pattern>
+            </encoder>
+        </appender>
+
+        <root level="INFO">
+            <appender-ref ref="HUMAN_CONSOLE"/>
+            <appender-ref ref="ASYNC_JSON_FILE"/>
+        </root>
+    </springProfile>
+
+    <springProfile name="!local">
+        <!-- Structured JSON: every MDC key (requestId, userId, orderId, traceId...) becomes a top-level field -->
+        <appender name="JSON_CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
+            <encoder class="net.logstash.logback.encoder.LogstashEncoder">
+                <customFields>{"service":"${SERVICE}","environment":"${ENV}"}</customFields>
+            <!-- Monotonic per-JVM counter: breaks ties when several events share a timestamp -->
+            <provider class="net.logstash.logback.composite.loggingevent.SequenceJsonProvider"/>
+                <throwableConverter class="net.logstash.logback.stacktrace.ShortenedThrowableConverter">
+                    <maxDepthPerThrowable>30</maxDepthPerThrowable>
+                    <rootCauseFirst>true</rootCauseFirst>
+                </throwableConverter>
+                <!-- Rule 1 safety net: mask secrets even if a developer forgets to -->
+                <jsonGeneratorDecorator class="net.logstash.logback.mask.MaskingJsonGeneratorDecorator">
+                    <defaultMask>****</defaultMask>
+                    <paths>password,otp,token,authorization,cardNumber</paths>
+                    <value>\b\d{13,19}\b</value>
+                    <value>(?i)(password|otp|token)=[^\s,]+</value>
+                </jsonGeneratorDecorator>
+            </encoder>
+        </appender>
+
+        <root level="INFO">
+            <appender-ref ref="JSON_CONSOLE"/>
+            <appender-ref ref="ASYNC_JSON_FILE"/>
+        </root>
+    </springProfile>
+</configuration>

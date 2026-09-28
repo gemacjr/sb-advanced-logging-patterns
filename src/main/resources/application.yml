@@ -1,0 +1,51 @@
+server:
+  port: 8085                 # 8080 is commonly taken by other local containers
+
+spring:
+  application:
+    name: order-service
+  threads:
+    virtual:
+      enabled: true          # thread names show up as e.g. "tomcat-handler-5" on virtual threads
+  profiles:
+    default: local           # human-readable console; run with --spring.profiles.active=prod for JSON
+
+app:
+  environment: ${APP_ENV:local}
+  logging:
+    json-file: logs/app.json # always written as JSON; Filebeat tails this file
+
+logging:
+  level:
+    root: INFO
+    com.company: DEBUG
+    com.company.orders.order.PaymentService: TRACE
+    org.springframework.web: WARN
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,loggers   # POST /actuator/loggers/{name} changes levels at runtime
+  tracing:
+    sampling:
+      probability: 1.0
+    export:
+      # Keep this true! In Boot 4, false also swaps in a no-op propagator, so traceparent headers
+      # stop flowing and every service hop starts a brand-new traceId.
+      enabled: true
+      otlp:
+        enabled: ${TRACING_EXPORT_ENABLED:false}   # only the Jaeger exporter; set true with docker compose
+  opentelemetry:
+    tracing:
+      export:
+        otlp:
+          endpoint: ${OTLP_ENDPOINT:http://localhost:4318/v1/traces}
+  otlp:
+    metrics:
+      export:
+        enabled: false        # no metrics backend in this demo
+  logging:
+    export:
+      otlp:
+        enabled: false        # logs go to ELK via Filebeat, not OTLP
